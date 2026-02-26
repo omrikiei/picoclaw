@@ -25,6 +25,11 @@ type (
 
 const defaultBaseURL = "https://api.anthropic.com"
 
+// isOAuthToken detects Claude Code OAuth tokens by their prefix
+func isOAuthToken(token string) bool {
+	return strings.HasPrefix(strings.TrimSpace(token), "sk-ant-oat01-")
+}
+
 type Provider struct {
 	client      *anthropic.Client
 	tokenSource func() (string, error)
@@ -37,10 +42,22 @@ func NewProvider(token string) *Provider {
 
 func NewProviderWithBaseURL(token, apiBase string) *Provider {
 	baseURL := normalizeBaseURL(apiBase)
-	client := anthropic.NewClient(
-		option.WithAuthToken(token),
-		option.WithBaseURL(baseURL),
-	)
+
+	var opts []option.RequestOption
+
+	// OAuth tokens (Claude Code) require special handling
+	if isOAuthToken(token) {
+		opts = append(opts,
+			option.WithHeader("Authorization", "Bearer "+token),
+			option.WithHeader("anthropic-beta", "oauth-2025-04-20"),
+		)
+	} else {
+		opts = append(opts, option.WithAuthToken(token))
+	}
+
+	opts = append(opts, option.WithBaseURL(baseURL))
+
+	client := anthropic.NewClient(opts...)
 	return &Provider{
 		client:  &client,
 		baseURL: baseURL,
@@ -77,7 +94,16 @@ func (p *Provider) Chat(
 		if err != nil {
 			return nil, fmt.Errorf("refreshing token: %w", err)
 		}
-		opts = append(opts, option.WithAuthToken(tok))
+
+		// OAuth tokens (Claude Code) require special handling
+		if isOAuthToken(tok) {
+			opts = append(opts,
+				option.WithHeader("Authorization", "Bearer "+tok),
+				option.WithHeader("anthropic-beta", "oauth-2025-04-20"),
+			)
+		} else {
+			opts = append(opts, option.WithAuthToken(tok))
+		}
 	}
 
 	params, err := buildParams(messages, tools, model, options)
